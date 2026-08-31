@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Environment/secrets
+.env
+.env.local
+
+# Data (local only, not committed)
+data/*
+!data/.gitkeep
+
+# OS/editor
+.DS_Store
+.vscode/
