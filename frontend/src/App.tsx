@@ -1,122 +1,132 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useState } from "react";
 
-function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+interface SentenceGrounding {
+  sentence: string;
+  matched_title: string | null;
+  matched_page: number | null;
+  similarity: number;
+  grounded: boolean;
+  citation_mismatch: boolean;
 }
 
-export default App
+interface Message {
+  role: "user" | "assistant";
+  content: string;
+  evidence_status?: string;
+  sentence_grounding?: SentenceGrounding[];
+}
+
+function App() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [conversationId, setConversationId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function sendMessage() {
+    if (!input.trim()) return;
+
+    const userMessage: Message = { role: "user", content: input };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: userMessage.content,
+          conversation_id: conversationId,
+          user_id: 0,
+        }),
+      });
+
+      const data = await response.json();
+
+      setConversationId(data.conversation_id);
+
+      const assistantMessage: Message = {
+        role: "assistant",
+        content: data.answer,
+        evidence_status: data.evidence_status,
+        sentence_grounding: data.sentence_grounding,
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error("Error calling MineAI backend:", error);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "Error: could not reach MineAI backend." },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      sendMessage();
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: "700px", margin: "40px auto", fontFamily: "sans-serif" }}>
+      <h1>MineAI</h1>
+
+      <div style={{ border: "1px solid #ccc", borderRadius: "8px", padding: "16px", minHeight: "300px", marginBottom: "16px" }}>
+        {messages.length === 0 && <p style={{ color: "#888" }}>Ask a mining-related question to get started.</p>}
+
+        {messages.map((msg, i) => (
+          <div key={i} style={{ marginBottom: "16px" }}>
+            <div style={{ fontWeight: "bold", marginBottom: "4px" }}>
+              {msg.role === "user" ? "You" : "MineAI"}
+            </div>
+            <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
+
+            {msg.evidence_status && (
+              <div style={{ marginTop: "6px", fontSize: "0.85em", color: "#555" }}>
+                Evidence status: <strong>{msg.evidence_status}</strong>
+              </div>
+            )}
+
+            {msg.sentence_grounding && msg.sentence_grounding.length > 0 && (
+              <details style={{ marginTop: "6px", fontSize: "0.85em" }}>
+                <summary style={{ cursor: "pointer", color: "#555" }}>Citations</summary>
+                <ul>
+                  {msg.sentence_grounding.map((s, j) => (
+                    <li key={j} style={{ marginBottom: "4px" }}>
+                      {s.matched_title ? `${s.matched_title}, page ${s.matched_page}` : "No source"}
+                      {" "}(similarity {s.similarity.toFixed(2)})
+                      {s.citation_mismatch && (
+                        <span style={{ color: "orange" }}> — citation mismatch flagged</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        ))}
+
+        {loading && <div style={{ color: "#888" }}>MineAI is thinking... (this can take a while on CPU)</div>}
+      </div>
+
+      <div style={{ display: "flex", gap: "8px" }}>
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Ask MineAI a question..."
+          style={{ flex: 1, padding: "10px", fontSize: "1em" }}
+          disabled={loading}
+        />
+        <button onClick={sendMessage} disabled={loading} style={{ padding: "10px 20px" }}>
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default App;
