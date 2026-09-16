@@ -19,6 +19,7 @@ def retrieve_chunks(query, user_id=None, top_k=3):
                 SELECT
                     c.id, c.chunk_text, c.page_number, d.title,
                     c.embedding AS embedding_vector,
+                    c.chunk_type,
                     c.embedding <=> :query_embedding AS distance
                 FROM chunks c
                 JOIN documents d ON c.document_id = d.id
@@ -30,7 +31,6 @@ def retrieve_chunks(query, user_id=None, top_k=3):
             {"query_embedding": str(query_embedding), "top_k": top_k, "user_id": user_id},
         )
         return result.fetchall()
-
 
 def get_conversation_history(conversation_id, engine, limit=6):
     """Fetch the most recent messages in a conversation, oldest first."""
