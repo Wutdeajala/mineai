@@ -7,6 +7,9 @@ from typing import Optional
 from ingest import ingest_document
 from fastapi import FastAPI, UploadFile, File, Form
 from typing import Optional
+from missing_info import identify_missing_information
+from risk_flagging import flag_risk_statements
+from rag import retrieve_chunks
 import shutil
 import os
 
@@ -31,6 +34,67 @@ class ChatRequest(BaseModel):
     conversation_id: int | None = None
     user_id: int | None = None
 
+class GapCheckRequest(BaseModel):
+    message_id: int
+
+
+@app.post("/check-gaps")
+def check_gaps(request: GapCheckRequest):
+    with engine.connect() as conn:
+        # Find the assistant message and the user question that preceded it
+        result = conn.execute(
+            text("""
+                SELECT m.content AS answer, m.conversation_id,
+                       (SELECT content FROM messages
+                        WHERE conversation_id = m.conversation_id AND id < m.id AND role = 'user'
+                        ORDER BY id DESC LIMIT 1) AS question
+                FROM messages m
+                WHERE m.id = :message_id
+            """),
+            {"message_id": request.message_id},
+        )
+        row = result.fetchone()
+
+        if not row or not row.question:
+            return {"error": "Could not find the original question for this message."}
+
+        all_chunks = retrieve_chunks(row.question, top_k=5)
+        relevant_chunks = [c for c in all_chunks if c.distance < 0.5]
+
+        if not relevant_chunks:
+            return {"message_id": request.message_id, "missing_information": ["No sufficiently relevant evidence was found to check for gaps."]}
+        
+        gaps = identify_missing_information(row.question, relevant_chunks, row.answer)
+        return {"message_id": request.message_id, "missing_information": gaps}    
+@app.post("/check-risks")
+def check_risks(request: GapCheckRequest):
+    with engine.connect() as conn:
+        result = conn.execute(
+            text("""
+                SELECT m.content AS answer, m.conversation_id,
+                       (SELECT content FROM messages
+                        WHERE conversation_id = m.conversation_id AND id < m.id AND role = 'user'
+                        ORDER BY id DESC LIMIT 1) AS question
+                FROM messages m
+                WHERE m.id = :message_id
+            """),
+            {"message_id": request.message_id},
+        )
+        row = result.fetchone()
+
+        if not row or not row.question:
+            return {"error": "Could not find the original question for this message."}
+
+        all_chunks = retrieve_chunks(row.question, top_k=5)
+        relevant_chunks = [c for c in all_chunks if c.distance < 0.5]
+
+        if not relevant_chunks:
+            return {"message_id": request.message_id, "risk_statements": [], "note": "No sufficiently relevant evidence was found to check for risks."} 
+
+
+        risks = flag_risk_statements(row.question, relevant_chunks, row.answer)
+        return {"message_id": request.message_id, "risk_statements": risks}
+    
 
 @app.get("/")
 def read_root():
@@ -95,7 +159,6 @@ def chat(request: ChatRequest):
             "evidence_status": result["evidence_status"],
             "sentence_grounding": result["sentence_grounding"],
         }
-
 
 @app.post("/documents/upload")
 def upload_document(

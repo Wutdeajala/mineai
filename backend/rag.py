@@ -72,6 +72,9 @@ Rules:
 - If the evidence only partially answers the question, say what is supported and explicitly state what is missing.
 - If the evidence does not contain relevant information to answer the question, say so directly instead of guessing.
 - Never invent a source or a fact not present in the evidence below.
+- If evidence describes something generally (e.g., about a whole country or industry) without
+  specifically naming the location, organization, or entity asked about, do not present it as
+  specific to that location/entity — say it reflects the broader/general context instead.
 - Use the conversation history only to understand context (e.g. what "it" or "that" refers to) — do not treat prior answers as evidence themselves.
 
 {conversation_section}Evidence:
@@ -91,13 +94,18 @@ def ask(question, conversation_id=None, user_id=None, top_k=3):
             "answer": "No relevant documents found to answer this question.",
             "evidence_status": "insufficient_evidence",
             "sentence_grounding": [],
+            "missing_information": ["No evidence was retrieved at all for this question."],
+            "chunks": [],
         }
 
     history = get_conversation_history(conversation_id, engine)
     prompt = build_prompt(question, chunks, history=history)
 
-  
-    response = ollama.chat(model="llama3.1:8b", messages=[{"role": "user", "content": prompt}], options={"num_predict": 300},)
+    response = ollama.chat(
+        model="llama3.1:8b",
+        messages=[{"role": "user", "content": prompt}],
+        options={"num_predict": 300},
+    )
     answer = response["message"]["content"]
 
     status, sentence_grounding = check_grounding(answer, chunks, embedding_model)
@@ -108,7 +116,6 @@ def ask(question, conversation_id=None, user_id=None, top_k=3):
         "sentence_grounding": sentence_grounding,
         "chunks": chunks,
     }
-
 
 if __name__ == "__main__":
     result = ask("What is the difference between large-scale and small-scale mining?", conversation_id=1)

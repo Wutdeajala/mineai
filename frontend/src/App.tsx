@@ -14,9 +14,14 @@ interface Message {
   content: string;
   evidence_status?: string;
   sentence_grounding?: SentenceGrounding[];
+  missing_information?: string[];
+  risk_statements?: string[];
+  messageId?: number;
 }
 
 function App() {
+  const [checkingGapsFor, setCheckingGapsFor] = useState<number | null>(null);
+  const [checkingRisksFor, setCheckingRisksFor] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState<number | null>(null);
@@ -50,6 +55,7 @@ function App() {
         content: data.answer,
         evidence_status: data.evidence_status,
         sentence_grounding: data.sentence_grounding,
+        messageId: data.message_id,
       };
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
@@ -62,6 +68,51 @@ function App() {
       setLoading(false);
     }
   }
+
+  async function checkGaps(index: number, messageId: number) {
+    setCheckingGapsFor(index);
+    try {
+      const response = await fetch("http://127.0.0.1:8000/check-gaps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message_id: messageId }),
+      });
+      const data = await response.json();
+
+      setMessages((prev) =>
+        prev.map((msg, i) =>
+          i === index ? { ...msg, missing_information: data.missing_information } : msg
+        )
+      );
+    } catch (error) {
+      console.error("Error checking gaps:", error);
+    } finally {
+      setCheckingGapsFor(null);
+    }
+  }
+
+    async function checkRisks(index: number, messageId: number) {
+    setCheckingRisksFor(index);
+    try {
+      const response = await fetch("http://127.0.0.1:8000/check-risks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message_id: messageId }),
+      });
+      const data = await response.json();
+
+      setMessages((prev) =>
+        prev.map((msg, i) =>
+          i === index ? { ...msg, risk_statements: data.risk_statements } : msg
+        )
+      );
+    } catch (error) {
+      console.error("Error checking risks:", error);
+    } finally {
+      setCheckingRisksFor(null);
+    }
+  }   
+  
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") {
@@ -81,7 +132,7 @@ function App() {
             <div style={{ fontWeight: "bold", marginBottom: "4px" }}>
               {msg.role === "user" ? "You" : "MineAI"}
             </div>
-            <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
+          <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
 
             {msg.evidence_status && (
               <div style={{ marginTop: "6px", fontSize: "0.85em", color: "#555" }}>
@@ -104,6 +155,58 @@ function App() {
                   ))}
                 </ul>
               </details>
+            )}
+
+            {msg.role === "assistant" && msg.messageId && !msg.missing_information && (
+              <button
+                onClick={() => checkGaps(i, msg.messageId!)}
+                disabled={checkingGapsFor === i}
+                style={{ marginTop: "6px", fontSize: "0.8em", padding: "4px 10px", cursor: "pointer" }}
+              >
+                {checkingGapsFor === i ? "Checking..." : "Check for gaps"}
+              </button>
+            )}
+
+            {msg.missing_information && msg.missing_information.length > 0 && (
+              <div style={{ marginTop: "6px", fontSize: "0.85em", padding: "8px", background: "#fff8e6", borderRadius: "4px" }}>
+                <strong>Gaps in evidence:</strong>
+                <ul style={{ margin: "4px 0 0 0", paddingLeft: "18px" }}>
+                  {msg.missing_information.map((gap, k) => (
+                    <li key={k}>{gap}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+             {msg.role === "assistant" && msg.messageId && !msg.risk_statements && (
+              <button
+                onClick={() => checkRisks(i, msg.messageId!)}
+                disabled={checkingRisksFor === i}
+                style={{ marginTop: "6px", marginLeft: "8px", fontSize: "0.8em", padding: "4px 10px", cursor: "pointer" }}
+              >
+                {checkingRisksFor === i ? "Checking..." : "Check for risks"}
+              </button>
+            )}
+
+            {msg.missing_information && msg.missing_information.length === 0 && (
+              <div style={{ marginTop: "6px", fontSize: "0.85em", color: "#888" }}>
+                No significant gaps found.
+              </div>
+            )}
+                        {msg.risk_statements && msg.risk_statements.length > 0 && (
+              <div style={{ marginTop: "6px", fontSize: "0.85em", padding: "8px", background: "#fdeaea", borderRadius: "4px" }}>
+                <strong>Risk-relevant statements in evidence:</strong>
+                <ul style={{ margin: "4px 0 0 0", paddingLeft: "18px" }}>
+                  {msg.risk_statements.map((risk, k) => (
+                    <li key={k}>{risk}</li>
+                  ))}
+                </ul>
+              </div>   
+            )}
+
+            {msg.risk_statements && msg.risk_statements.length === 0 && (
+              <div style={{ marginTop: "6px", fontSize: "0.85em", color: "#888" }}>
+                No risk-relevant statements found.
+              </div>
             )}
           </div>
         ))}
