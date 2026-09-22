@@ -1,6 +1,8 @@
 import ollama
 from sentence_transformers import SentenceTransformer
 from sqlalchemy import create_engine, text
+from external_search import search_web, format_external_results_as_evidence
+from missing_info import identify_missing_information
 from dotenv import load_dotenv
 import os
 
@@ -94,8 +96,8 @@ def ask(question, conversation_id=None, user_id=None, top_k=3):
             "answer": "No relevant documents found to answer this question.",
             "evidence_status": "insufficient_evidence",
             "sentence_grounding": [],
-            "missing_information": ["No evidence was retrieved at all for this question."],
             "chunks": [],
+            "used_external_search": False,
         }
 
     history = get_conversation_history(conversation_id, engine)
@@ -110,13 +112,49 @@ def ask(question, conversation_id=None, user_id=None, top_k=3):
 
     status, sentence_grounding = check_grounding(answer, chunks, embedding_model)
 
+    used_external_search = False
+    external_sources = []
+
+    no_answer_phrases = [
+        "no information", "does not provide", "does not contain",
+        "not mentioned", "no relevant", "no data", "not discussed"
+    ]
+    answer_indicates_gap = any(phrase in answer.lower() for phrase in no_answer_phrases)
+
+    if status in ("insufficient_evidence", "partially_supported") or answer_indicates_gap:
+        gaps = identify_missing_information(question, chunks, answer)
+        if gaps:
+            search_query = gaps[0]  # use the first, most specific identified gap
+            web_results = search_web(search_query, max_results=3)
+
+            if web_results:
+                used_external_search = True
+                external_block, external_sources = format_external_results_as_evidence(
+                    web_results, source_number_start=len(chunks) + 1
+                )
+
+                # Rebuild the prompt including both local and external evidence
+                combined_prompt = build_prompt(question, chunks, history=history)
+                combined_prompt = combined_prompt.replace(
+                    "Question:", f"{external_block}Question:"
+                )
+
+                response = ollama.chat(
+                    model="llama3.1:8b",
+                    messages=[{"role": "user", "content": combined_prompt}],
+                    options={"num_predict": 350},
+                )
+                answer = response["message"]["content"]
+                status, sentence_grounding = check_grounding(answer, chunks, embedding_model)
+
     return {
         "answer": answer,
         "evidence_status": status,
         "sentence_grounding": sentence_grounding,
         "chunks": chunks,
+        "used_external_search": used_external_search,
+        "external_sources": external_sources,
     }
-
 if __name__ == "__main__":
     result = ask("What is the difference between large-scale and small-scale mining?", conversation_id=1)
     print("ANSWER:\n", result["answer"])

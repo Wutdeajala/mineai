@@ -34,3 +34,26 @@ Built, integrated as a config flag (use_reranker), tested against a formal
 evaluation set - found no measurable improvement (and slight MRR regression)
 on the current small corpus. Defaults to OFF. Worth re-testing once corpus
 is significantly larger.
+
+
+## External Search Citation Integration (Phase 9)
+When automatic external search triggers (see external_search.py, rag.py ask()),
+web results are included in the generation prompt and correctly labeled as
+"EXTERNAL WEB SOURCE (unverified)" - the model does treat them with appropriate
+caution in its answers (tested: correctly refused to state an unverified gold
+price as fact). However, external sources are NOT currently integrated into the
+structured citation/grounding system (check_grounding only knows about local
+database chunks) - so external claims appear in the answer text but don't show
+up in the clickable citations panel. A user can't verify an external claim the
+same way they can a local one. Next step: extend check_grounding to also accept
+and verify against external source snippets.
+
+## External Search Trigger Logic (Phase 9)
+Initial trigger only checked evidence_status (insufficient_evidence/
+partially_supported) - found via testing that a well-grounded answer correctly
+stating "no local data exists" scores as "supported" (the statement itself IS
+supported), so the trigger never fired. Fixed by adding a second, heuristic
+keyword check on the answer text itself (phrases like "no information",
+"does not provide", etc.) alongside the evidence_status check. This is a blunt
+fix, not a robust one - could false-positive/negative on differently-phrased
+gaps. Works for now; revisit if it proves unreliable in practice.
