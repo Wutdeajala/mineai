@@ -4,6 +4,9 @@ from sqlalchemy import create_engine, text
 from external_search import search_web, format_external_results_as_evidence
 from missing_info import identify_missing_information
 from dotenv import load_dotenv
+from query_router import route_query
+from structured_query import run_structured_query
+from sqlalchemy import text as sql_text
 import os
 
 from grounding import check_grounding
@@ -33,6 +36,19 @@ def retrieve_chunks(query, user_id=None, top_k=3):
             {"query_embedding": str(query_embedding), "top_k": top_k, "user_id": user_id},
         )
         return result.fetchall()
+
+
+def get_available_datasets(user_id=None):
+    with engine.connect() as conn:
+        result = conn.execute(
+            sql_text("""
+                SELECT id, title, columns FROM structured_datasets
+                WHERE source_type = 'curated_kb' OR (source_type = 'user_upload' AND user_id = :user_id)
+            """),
+            {"user_id": user_id},
+        )
+        return [{"id": r.id, "title": r.title, "columns": r.columns} for r in result.fetchall()]
+
 
 def get_conversation_history(conversation_id, engine, limit=6):
     """Fetch the most recent messages in a conversation, oldest first."""
@@ -89,6 +105,34 @@ Answer:"""
 
 
 def ask(question, conversation_id=None, user_id=None, top_k=3):
+    # Check if this question should be answered via structured data computation
+    available_datasets = get_available_datasets(user_id=user_id)
+    routing = route_query(question, available_datasets)
+
+    if routing.get("use_structured_data") and routing.get("dataset_id"):
+        structured_result = run_structured_query(question, routing["dataset_id"])
+
+        if "error" not in structured_result:
+            answer = (
+                f"Based on the structured dataset \"{structured_result['dataset_title']}\" "
+                f"({structured_result['total_rows']} rows): the {structured_result['operation']} "
+                f"of {structured_result['column']} is {structured_result['result']}."
+            )
+            if structured_result.get("row_context"):
+                context = structured_result["row_context"]
+                answer += f" This value comes from: {context}."
+
+            return {
+                "answer": answer,
+                "evidence_status": "supported",
+                "sentence_grounding": [],
+                "chunks": [],
+                "used_external_search": False,
+                "external_sources": [],
+                "used_structured_data": True,
+            }
+
+    # Fall through to normal document retrieval if routing didn't apply
     chunks = retrieve_chunks(question, user_id=user_id, top_k=top_k)
 
     if not chunks:
@@ -98,6 +142,8 @@ def ask(question, conversation_id=None, user_id=None, top_k=3):
             "sentence_grounding": [],
             "chunks": [],
             "used_external_search": False,
+            "external_sources": [],
+            "used_structured_data": False,
         }
 
     history = get_conversation_history(conversation_id, engine)
@@ -115,6 +161,7 @@ def ask(question, conversation_id=None, user_id=None, top_k=3):
     used_external_search = False
     external_sources = []
 
+    # Only trigger external search when local evidence is already known to be weak
     no_answer_phrases = [
         "no information", "does not provide", "does not contain",
         "not mentioned", "no relevant", "no data", "not discussed"
@@ -124,7 +171,7 @@ def ask(question, conversation_id=None, user_id=None, top_k=3):
     if status in ("insufficient_evidence", "partially_supported") or answer_indicates_gap:
         gaps = identify_missing_information(question, chunks, answer)
         if gaps:
-            search_query = gaps[0]  # use the first, most specific identified gap
+            search_query = gaps[0]
             web_results = search_web(search_query, max_results=3)
 
             if web_results:
@@ -133,7 +180,6 @@ def ask(question, conversation_id=None, user_id=None, top_k=3):
                     web_results, source_number_start=len(chunks) + 1
                 )
 
-                # Rebuild the prompt including both local and external evidence
                 combined_prompt = build_prompt(question, chunks, history=history)
                 combined_prompt = combined_prompt.replace(
                     "Question:", f"{external_block}Question:"
@@ -154,7 +200,10 @@ def ask(question, conversation_id=None, user_id=None, top_k=3):
         "chunks": chunks,
         "used_external_search": used_external_search,
         "external_sources": external_sources,
+        "used_structured_data": False,
     }
+
+
 if __name__ == "__main__":
     result = ask("What is the difference between large-scale and small-scale mining?", conversation_id=1)
     print("ANSWER:\n", result["answer"])
